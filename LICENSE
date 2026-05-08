@@ -1,0 +1,94 @@
+Reko - Automated Active and Passive Network Enumeration Framework
+Copyright (c) 2025-2027 Mayan Suthar
+
+This software is distributed under the same license as Nmap.
+See https://nmap.org/book/man-legal.html for the full Nmap license.
+
+-------------------------------------------------------------------------------
+
+NMAP LICENSE SUMMARY
+(For the full text see: https://nmap.org/book/man-legal.html)
+
+Nmap is released under a custom license that includes the following terms:
+
+1. FREE FOR LEGITIMATE USE
+   Nmap is free to use for network administrators, security professionals,
+   researchers, and students for legitimate purposes including:
+   - Network inventory and auditing
+   - Security scanning and penetration testing (with authorisation)
+   - Academic research
+   - CTF competitions
+
+2. SOURCE CODE
+   The Nmap source code is available and may be modified under the terms
+   of the Nmap license. Any NSE scripts distributed with or derived from
+   Nmap inherit this license.
+
+3. RESTRICTIONS
+   - You may not use Nmap or scripts based on it in commercial products
+     without a commercial license from Nmap Software LLC
+   - Bundling Nmap with proprietary software for distribution requires
+     written permission
+
+4. NO WARRANTY
+   Nmap and this script are provided "as is" without warranty of any kind.
+   The authors are not responsible for any damage caused by use or misuse.
+
+-------------------------------------------------------------------------------
+
+ADDITIONAL TERMS FOR REKO
+
+1. AUTHORISED USE ONLY
+   This tool is intended exclusively for:
+   - Penetration testing of systems you own
+   - Systems for which you have explicit written authorisation to test
+   - Controlled lab environments (e.g. Metasploitable, HackTheBox, TryHackMe)
+   - Academic research and CTF competitions
+
+2. PROHIBITED USE
+   You may NOT use this tool to:
+   - Scan or probe systems without explicit written permission
+   - Attack production systems, critical infrastructure, or public services
+   - Facilitate unauthorised access to computer systems
+   - Conduct denial-of-service attacks
+
+3. LEGAL NOTICE
+   Unauthorised scanning and penetration testing is illegal under:
+   - Computer Fraud and Abuse Act (CFAA) - United States
+   - Computer Misuse Act - United Kingdom
+   - IT Act 2000 (Section 43, 66) - India
+   - And equivalent laws in most jurisdictions worldwide
+
+   The author assumes NO liability for any misuse of this tool.
+   By using this software you agree that you are solely responsible
+   for ensuring your use complies with all applicable laws.
+
+4. RESEARCH CONTEXT
+   Reko was developed as part of M.Tech research in Cyber Security at
+   Sardar Patel University of Police, Security and Criminal Justice (SPUPSC)
+   under the guidance of Dr. Arjun Choudhary and Dr. Vikas Sihag.
+
+   Academic Session: 2025-2027
+   Author: Mayan Suthar
+
+5. ATTRIBUTION
+   If you use Reko in research, publications, or presentations, please cite:
+
+   Suthar, M. (2025). Reko - An Automated Active and Passive Network
+   Enumeration Framework for Prioritized Attack Path Discovery.
+   M.Tech Research, Sardar Patel University of Police, Security and
+   Criminal Justice. https://github.com/MayanSuthar/reko
+
+-------------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+For questions about licensing contact: github.com/MayanSuthar
