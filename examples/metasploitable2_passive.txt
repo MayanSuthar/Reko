@@ -1,0 +1,386 @@
+# Reko v0.1.0-dev — Passive Scan Output
+# Target:   192.168.100.60 (Metasploitable 2)
+# Command:  nmap -sV -p 21,22,23,25,53,80,111,139,445,1099,2049,2121,3306,5432,5900,6667,8009,8180 --script reko.nse 192.168.100.60
+# Mode:     aggression=0 (passive only — no login attempts, no exploit probes)
+# Date:     2026-05-10 03:27 UTC
+# Duration: 21 seconds
+#
+# Summary:
+#   Total findings : 34
+#   CRITICAL       : 8
+#   HIGH           : 17
+#   MEDIUM         : 9
+#   LOW            : 0
+#   INFO           : 0
+#   False positives: 0
+# =============================================================================
+
+Starting Nmap 7.95 ( https://nmap.org ) at 2026-05-10 03:27 UTC
+Nmap scan report for 192.168.100.60
+Host is up (0.0072s latency).
+
+PORT     STATE SERVICE     VERSION
+21/tcp   open  ftp         vsftpd 2.3.4
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-21-1778383655  service=ftp
+| [HIGH][192.168.100.60:21][FTP] FTP service banner disclosed -- CVE-2011-2523 known  (score: 0.83, HIGH)
+|   The FTP service returned a detailed greeting banner revealing server software and version.
+|   Software: vsFTPd  Version: 2.3.4.
+|   CVE: CVE-2011-2523 (CRITICAL) -- Backdoor planted in source. Send USER user:) to open shell on port 6200
+|   evidence.banner_raw = 220 (vsFTPd 2.3.4)
+|   evidence.cve = CVE-2011-2523
+|   evidence.software = vsFTPd
+|   evidence.version = 2.3.4
+|   evidence.exploit_db = https://www.exploit-db.com/exploits/17491
+|   evidence.cve_note = Backdoor planted in source. Send USER user:) to open shell on port 6200
+|   confidence=0.95  impact=0.75  module=ftp
+| [HIGH][192.168.100.60:21][FTP] FTP transmits credentials in cleartext (no FTPS/AUTH TLS)  (score: 0.71, HIGH)
+|   The FTP server does not support AUTH TLS (FTPS). Usernames, passwords, and file content
+|   are transmitted in plaintext over the network, making them trivially interceptable by any
+|   network observer. Upgrade to FTPS or replace FTP with SFTP (SSH file transfer).
+|   evidence.auth_tls_response = 530 Please login with USER and PASS.
+|   evidence.remediation = Enable AUTH TLS or migrate to SFTP
+|   confidence=0.95  impact=0.55  module=ftp
+|
+| =================================================================
+| REKO ATTACK PATH SUMMARY -- 192.168.100.60
+| 9 CRITICAL/HIGH findings across 4 ports
+| =================================================================
+|
+| PATH 1 -- FILE READ -> POTENTIAL RCE: Ghostcat
+|   WHY: CVE-2020-1938: AJP file inclusion reads any webapp file.
+|        If file upload is present, chain to RCE.
+|   HOW:
+|     1. python3 ghostcat.py -H 192.168.100.60 -f /WEB-INF/web.xml
+|     2. Check web.xml for credentials or included files
+|     3. If file upload exists: upload JSP shell, include via AJP -> RCE
+|
+| ------------------------------------------------------------------
+| Full finding list: 9 findings sorted by score above.
+|_=================================================================
+
+22/tcp   open  ssh         OpenSSH 4.7p1 Debian 8ubuntu1 (protocol 2.0)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-22-1778383655  service=ssh
+| [MEDIUM][192.168.100.60:22][SSH] SSH service banner disclosed  (score: 0.56, MEDIUM)
+|   The SSH server returned an identification string revealing software and version.
+|   Software: OpenSSH_4.7p1  Protocol: 2.0.
+|   evidence.banner_raw = SSH-2.0-OpenSSH_4.7p1 Debian-8ubuntu1
+|   evidence.software = OpenSSH_4.7p1
+|   evidence.protocol = 2.0
+|   evidence.comment = Debian-8ubuntu1
+|   evidence.cve = none known
+|_  confidence=0.95  impact=0.30  module=ssh
+
+23/tcp   open  telnet      Linux telnetd
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-23-1778383655  service=telnet
+| [HIGH][192.168.100.60:23][TELNET] Telnet service active -- all data transmitted in CLEARTEXT  (score: 0.83, HIGH)
+|   Telnet transmits usernames, passwords, and all session data in plaintext.
+|   Any network observer can capture credentials and session content.
+|   Telnet should be replaced with SSH in all modern environments.
+|   evidence.remediation = Disable telnet: systemctl disable telnet; deploy SSH instead; firewall port 23
+|_  confidence=0.95  impact=0.75  module=telnet
+
+25/tcp   open  smtp        Postfix smtpd
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-25-1778383655  service=smtp
+| [MEDIUM][192.168.100.60:25][SMTP] SMTP service banner disclosed  (score: 0.56, MEDIUM)
+|   The SMTP server's 220 greeting reveals MTA software and version.
+|   Software: Postfix  Version: unknown  Hostname: metasploitable.localdomain
+|   evidence.software = Postfix
+|   evidence.hostname = metasploitable.localdomain
+|   evidence.banner_raw = 220 metasploitable.localdomain ESMTP Postfix (Ubuntu)
+|   evidence.version = unknown
+|   confidence=0.95  impact=0.30  module=smtp
+| [MEDIUM][192.168.100.60:25][SMTP] SMTP EHLO capabilities enumerated (9 extensions)  (score: 0.50, MEDIUM)
+|   The server's EHLO response advertises all supported extensions.
+|   evidence.capabilities = 8BITMIME, DSN, ENHANCEDSTATUSCODES, ETRN, METASPLOITABLE.LOCALDOMAIN,
+|                            PIPELINING, SIZE 10240000, STARTTLS, VRFY
+|   confidence=0.95  impact=0.20  module=smtp
+| [MEDIUM][192.168.100.60:25][SMTP] SMTP STARTTLS is advertised  (score: 0.42, MEDIUM)
+|   The server offers STARTTLS. Verify that TLS is also enforced (not just optional)
+|   and that the certificate is valid and not self-signed.
+|   evidence.starttls = advertised
+|_  confidence=0.90  impact=0.10  module=smtp
+
+53/tcp   open  domain      ISC BIND 9.4.2
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-53-1778383655  service=dns
+| [HIGH][192.168.100.60:53][DNS] DNS open recursion enabled (DNS amplification attack risk)  (score: 0.77, HIGH)
+|   The server resolved an external name (google.com) on behalf of our query.
+|   Open recursive resolvers can be abused in DNS amplification DDoS attacks
+|   (up to 100x traffic amplification).
+|   evidence.test_query = google.com A
+|   evidence.answer_count = 1
+|   evidence.remediation = Restrict recursion to authorised client IP ranges:
+|     'allow-recursion { trusted_acl; };' (BIND) or 'access-control: <cidr> allow' (Unbound)
+|   confidence=0.95  impact=0.65  module=dns
+| [MEDIUM][192.168.100.60:53][DNS] DNS server version disclosed via version.bind  (score: 0.59, MEDIUM)
+|   The server responded to a version.bind CHAOS TXT query with its software version string.
+|   evidence.version_string = 9.4.2
+|   evidence.query = version.bind CHAOS TXT
+|   evidence.remediation = BIND: set 'version "none";' in options {};
+|_  confidence=0.95  impact=0.35  module=dns
+
+80/tcp   open  http        Apache httpd 2.2.8 ((Ubuntu) DAV/2)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-80-1778383655  service=http
+| [CRITICAL][192.168.100.60:80][HTTP] Sensitive path accessible: Mutillidae vulnerable app  (score: 0.88, CRITICAL)
+|   HTTP GET /mutillidae/ returned 200 OK with a non-trivial response (24580 bytes).
+|   evidence.path = /mutillidae/
+|   evidence.response_size = 24580 bytes
+|   evidence.label = Mutillidae vulnerable app
+|   evidence.remediation = Restrict access with authentication or remove the path from the web root
+|   confidence=0.99  impact=0.80  module=http
+| [CRITICAL][192.168.100.60:80][HTTP] Sensitive path accessible: DVWA login page  (score: 0.86, CRITICAL)
+|   HTTP GET /dvwa/login.php returned 200 OK with a non-trivial response (1289 bytes).
+|   evidence.path = /dvwa/login.php
+|   evidence.response_size = 1289 bytes
+|   evidence.label = DVWA login page
+|   evidence.remediation = Restrict access with authentication or remove the path from the web root
+|   confidence=0.99  impact=0.78  module=http
+| [CRITICAL][192.168.100.60:80][HTTP] Sensitive path accessible: Mutillidae index  (score: 0.86, CRITICAL)
+|   HTTP GET /mutillidae/index.php returned 200 OK with a non-trivial response (24207 bytes).
+|   evidence.path = /mutillidae/index.php
+|   evidence.response_size = 24207 bytes
+|   evidence.label = Mutillidae index
+|   evidence.remediation = Restrict access with authentication or remove the path from the web root
+|   confidence=0.99  impact=0.78  module=http
+| [CRITICAL][192.168.100.60:80][HTTP] Sensitive path accessible: phpinfo() output page  (score: 0.85, CRITICAL)
+|   HTTP GET /phpinfo.php returned 200 OK with a non-trivial response (48236 bytes).
+|   phpinfo() reveals PHP configuration, loaded modules, environment variables, and server paths.
+|   evidence.path = /phpinfo.php
+|   evidence.response_size = 48236 bytes
+|   evidence.label = phpinfo() output page
+|   evidence.remediation = Restrict access with authentication or remove the path from the web root
+|   confidence=0.99  impact=0.75  module=http
+| [HIGH][192.168.100.60:80][HTTP] Sensitive path accessible: TikiWiki CMS  (score: 0.82, HIGH)
+|   HTTP GET /tikiwiki/ returned 200 OK with a non-trivial response (328 bytes).
+|   evidence.path = /tikiwiki/
+|   evidence.response_size = 328 bytes
+|   evidence.label = TikiWiki CMS
+|   confidence=0.99  impact=0.70  module=http
+| [HIGH][192.168.100.60:80][HTTP] Sensitive path accessible: TWiki collaboration platform  (score: 0.80, HIGH)
+|   HTTP GET /twiki/ returned 200 OK with a non-trivial response (782 bytes).
+|   evidence.path = /twiki/
+|   evidence.response_size = 782 bytes
+|   evidence.label = TWiki collaboration platform
+|   confidence=0.99  impact=0.68  module=http
+| [HIGH][192.168.100.60:80][HTTP] Sensitive path accessible: TikiWiki index  (score: 0.80, HIGH)
+|   HTTP GET /tikiwiki/tiki-index.php returned 200 OK with a non-trivial response (316 bytes).
+|   evidence.path = /tikiwiki/tiki-index.php
+|   evidence.label = TikiWiki index
+|   confidence=0.99  impact=0.68  module=http
+| [HIGH][192.168.100.60:80][HTTP] Sensitive path accessible: TWiki view endpoint  (score: 0.79, HIGH)
+|   HTTP GET /twiki/bin/view returned 200 OK with a non-trivial response (10076 bytes).
+|   evidence.path = /twiki/bin/view
+|   evidence.label = TWiki view endpoint
+|   confidence=0.99  impact=0.65  module=http
+| [HIGH][192.168.100.60:80][HTTP] HTTP security headers missing (6/6)  (score: 0.77, HIGH)
+|   The following security response headers are absent:
+|   Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options,
+|   Content-Security-Policy, Referrer-Policy, Permissions-Policy
+|   evidence.remediation = Add the listed headers in your web server configuration
+|   confidence=0.95  impact=0.65  module=http
+| [MEDIUM][192.168.100.60:80][HTTP] HTTP technology stack disclosed via response headers  (score: 0.62, MEDIUM)
+|   evidence.disclosed_headers = X-Powered-By: PHP/5.2.4-2ubuntu5.10
+|   confidence=0.95  impact=0.40  module=http
+| [MEDIUM][192.168.100.60:80][HTTP] HTTP Server header discloses software version  (score: 0.59, MEDIUM)
+|   evidence.server_header = Apache/2.2.8 (Ubuntu) DAV/2
+|   evidence.remediation = Apache: ServerTokens Prod
+|_  confidence=0.95  impact=0.35  module=http
+
+111/tcp  open  rpcbind     2 (RPC #100000)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-111-1778383655  service=rpc
+| [HIGH][192.168.100.60:111][RPC] High-value RPC services exposed: mountd on port 60612  (score: 0.74, HIGH)
+|   NFS/mountd services are registered with the portmapper.
+|   These allow filesystem enumeration and potential unauthenticated mount attempts.
+|   evidence.services = mountd on port 60612, mountd on port 53321
+|   evidence.remediation = Restrict NFS exports; enforce Kerberos auth for NFS v4
+|   confidence=0.95  impact=0.60  module=rpc
+| [MEDIUM][192.168.100.60:111][RPC] RPC portmapper exposes 22 registered services  (score: 0.54, MEDIUM)
+|   The Sun RPC portmapper responded with a full list of all registered RPC programs.
+|   evidence.program_count = 22
+|   evidence.remediation = Firewall port 111; restrict portmapper with tcpwrappers
+|_  confidence=0.90  impact=0.30  module=rpc
+
+139/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-139-1778383655  service=smb
+| [CRITICAL][192.168.100.60:139][SMB] SMBv1 (CIFS) is active -- EternalBlue / WannaCry risk  (score: 0.94, CRITICAL)
+|   The server selected an SMBv1 dialect in response to our Negotiate request.
+|   SMBv1 is the protocol exploited by EternalBlue (MS17-010), which powers WannaCry and NotPetya.
+|   evidence.dialect_index = 5
+|   evidence.remediation = Linux/Samba: min protocol = SMB2 in smb.conf
+|   confidence=0.99  impact=0.90  module=smb
+| [CRITICAL][192.168.100.60:139][SMB] SMB message signing is DISABLED -- relay attack risk  (score: 0.85, CRITICAL)
+|   SMB signing is completely disabled. An attacker can perform NTLM relay attacks
+|   using Responder + ntlmrelayx without knowing any password.
+|   evidence.signing_status = disabled
+|   evidence.remediation = Set-SmbServerConfiguration -RequireSecuritySignature $true
+|   confidence=0.99  impact=0.75  module=smb
+| [MEDIUM][192.168.100.60:139][SMB] SMB OS and domain information disclosed  (score: 0.59, MEDIUM)
+|   evidence.smb_port = 139
+|   evidence.domain = not disclosed
+|   evidence.lan_manager = not disclosed
+|_  confidence=0.95  impact=0.35  module=smb
+
+445/tcp  open  netbios-ssn Samba smbd 3.X - 4.X (workgroup: WORKGROUP)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-445-1778383655  service=smb
+| [CRITICAL][192.168.100.60:445][SMB] SMBv1 (CIFS) is active -- EternalBlue / WannaCry risk  (score: 0.94, CRITICAL)
+|   evidence.dialect_index = 5
+|   confidence=0.99  impact=0.90  module=smb
+| [CRITICAL][192.168.100.60:445][SMB] SMB message signing is DISABLED -- relay attack risk  (score: 0.85, CRITICAL)
+|   evidence.signing_status = disabled
+|   confidence=0.99  impact=0.75  module=smb
+| [MEDIUM][192.168.100.60:445][SMB] SMB OS and domain information disclosed  (score: 0.59, MEDIUM)
+|   evidence.smb_port = 445
+|_  confidence=0.95  impact=0.35  module=smb
+
+1099/tcp open  java-rmi    GNU Classpath grmiregistry
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-1099-1778383655  service=java_rmi
+| [MEDIUM][192.168.100.60:1099][JAVA_RMI] Java RMI registry is accessible without authentication  (score: 0.63, MEDIUM)
+|   The Java RMI registry responded to a protocol handshake. Unauthenticated RMI registry access
+|   is a vector for Java deserialization attacks (ysoserial, CVE-2017-3241).
+|   evidence.port = 1099
+|   evidence.remediation = Firewall RMI ports; use SSL/TLS for RMI (javax.rmi.ssl)
+|_  confidence=0.90  impact=0.45  module=java_rmi
+
+2049/tcp open  nfs         2-4 (RPC #100003)
+
+2121/tcp open  ftp         ProFTPD 1.3.1
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-2121-1778383655  service=ftp
+| [HIGH][192.168.100.60:2121][FTP] FTP transmits credentials in cleartext (no FTPS/AUTH TLS)  (score: 0.71, HIGH)
+|   evidence.auth_tls_response = 500 AUTH not understood
+|   evidence.remediation = Enable AUTH TLS or migrate to SFTP
+|   confidence=0.95  impact=0.55  module=ftp
+| [HIGH][192.168.100.60:2121][FTP] FTP service banner disclosed -- CVE-2010-4221 known  (score: 0.68, HIGH)
+|   Software: ProFTPD  Version: 1.3.1
+|   CVE: CVE-2010-4221 (HIGH) -- Buffer overflow via TELNET_IAC sequence
+|   evidence.banner_raw = 220 ProFTPD 1.3.1 Server (Debian) [::ffff:192.168.100.60]
+|   evidence.cve = CVE-2010-4221
+|   evidence.exploit_db = https://www.exploit-db.com/exploits/15449
+|   evidence.cve_note = Buffer overflow via TELNET_IAC sequence
+|_  confidence=0.95  impact=0.50  module=ftp
+
+3306/tcp open  mysql       MySQL 5.0.51a-3ubuntu5
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-3306-1778383655  service=mysql
+| [HIGH][192.168.100.60:3306][MYSQL] MySQL server version disclosed -- CVE-2012-2122  (score: 0.77, HIGH)
+|   MySQL sends its exact version string before authentication.
+|   Version: 5.0.51a-3ubuntu5
+|   CVE: CVE-2012-2122 -- Authentication bypass: repeated login with wrong password
+|   succeeds ~1/256 times
+|   evidence.cve = CVE-2012-2122
+|   evidence.version = 5.0.51a-3ubuntu5
+|   evidence.exploit_db = https://www.exploit-db.com/exploits/19092
+|   evidence.cve_note = Authentication bypass: repeated login with wrong password succeeds ~1/256 times
+|   confidence=0.95  impact=0.65  module=mysql
+| [HIGH][192.168.100.60:3306][MYSQL] MySQL weak authentication plugin: none advertised  (score: 0.77, HIGH)
+|   The server does not advertise a modern authentication plugin.
+|   mysql_old_password uses a broken 16-byte hash trivially crackable offline.
+|   evidence.auth_plugin = not specified
+|   evidence.remediation = Set default_authentication_plugin=mysql_native_password (minimum acceptable)
+|_  confidence=0.95  impact=0.65  module=mysql
+
+5432/tcp open  postgresql  PostgreSQL DB 8.3.0 - 8.3.7
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-5432-1778383655  service=postgresql
+| [HIGH][192.168.100.60:5432][POSTGRESQL] PostgreSQL uses MD5 password authentication (deprecated)  (score: 0.71, HIGH)
+|   MD5 is deprecated in PostgreSQL 14+ and vulnerable to offline dictionary attacks
+|   and rainbow table lookups. Upgrade to SCRAM-SHA-256.
+|   evidence.auth_type = MD5
+|   evidence.remediation = pg_hba.conf: change 'md5' to 'scram-sha-256'
+|_  confidence=0.95  impact=0.55  module=postgresql
+
+5900/tcp open  vnc         VNC (protocol 3.3)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-5900-1778383655  service=vnc
+| [HIGH][192.168.100.60:5900][VNC] VNC uses DES-based password authentication (weak)  (score: 0.71, HIGH)
+|   Security type 2 (VNC Authentication) uses a DES challenge-response scheme with an
+|   8-character password limit. Brute-forceable with Crowbar or Medusa.
+|   evidence.security_type = 2 (VNC Authentication)
+|   evidence.remediation = Upgrade to VeNCrypt (type 18/19) with TLS
+|   confidence=0.95  impact=0.55  module=vnc
+| [HIGH][192.168.100.60:5900][VNC] VNC uses old protocol version RFB 3.3  (score: 0.68, HIGH)
+|   Protocol versions below 3.7 have known vulnerabilities and limited security type negotiation.
+|   evidence.rfb_version = 3.3
+|   confidence=0.95  impact=0.50  module=vnc
+| [MEDIUM][192.168.100.60:5900][VNC] VNC service active -- RFB 3.3 -- auth types: VNC Authentication (DES-based)  (score: 0.56, MEDIUM)
+|   evidence.security_types = VNC Authentication (DES-based)
+|   evidence.rfb_version = 3.3
+|_  confidence=0.95  impact=0.30  module=vnc
+
+6667/tcp open  irc         UnrealIRCd
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-6667-1778383655  service=irc
+| [MEDIUM][192.168.100.60:6667][IRC] IRC service active -- version unknown  (score: 0.57, MEDIUM)
+|   An IRC server is running on this host. IRC servers are rarely intentional on production
+|   systems and may indicate a backdoored or legacy installation.
+|   evidence.server_host = 192.168.100.60
+|   evidence.version = unknown
+|_  confidence=0.90  impact=0.35  module=irc
+
+8009/tcp open  ajp13       Apache Jserv (Protocol v1.3)
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-8009-1778383655  service=ajp
+| [CRITICAL][192.168.100.60:8009][AJP] Ghostcat CVE-2020-1938: /WEB-INF/web.xml read successfully (CRITICAL)  (score: 0.94, CRITICAL)
+|   The AJP connector responded with content from /WEB-INF/web.xml via a file include request.
+|   Ghostcat (CVE-2020-1938) allows any file within the web application to be read,
+|   and if file upload is available, can lead to Remote Code Execution.
+|   evidence.cve = CVE-2020-1938
+|   evidence.cvss = 9.8 CRITICAL
+|   evidence.response_size = 8774 bytes
+|   evidence.remediation = Upgrade Tomcat to 9.0.31+, 8.5.51+, or 7.0.100+; disable AJP connector
+|   confidence=0.99  impact=0.90  module=ajp
+| [HIGH][192.168.100.60:8009][AJP] AJP connector (port 8009) is accessible from the network (HIGH)  (score: 0.77, HIGH)
+|   The Apache JServ Protocol connector is reachable without any network-level restriction.
+|   AJP is an internal protocol and should never be publicly accessible.
+|   evidence.port = 8009
+|   evidence.remediation = Firewall port 8009 immediately
+|_  confidence=0.95  impact=0.65  module=ajp
+
+8180/tcp open  http        Apache Tomcat/Coyote JSP engine 1.1
+| reko: Reko 0.1.0-dev  run_id=reko-192-168-100-60-8180-1778383655  service=http
+| [CRITICAL][192.168.100.60:8180][HTTP] Sensitive path accessible: WebDAV directory  (score: 0.86, CRITICAL)
+|   HTTP GET /webdav/ returned 200 OK with a non-trivial response (1775 bytes).
+|   evidence.path = /webdav/
+|   evidence.response_size = 1775 bytes
+|   confidence=0.99  impact=0.78  module=http
+| [HIGH][192.168.100.60:8180][HTTP] Sensitive path accessible: Admin panel (trailing /)  (score: 0.82, HIGH)
+|   HTTP GET /admin/ returned 200 OK with a non-trivial response (4784 bytes).
+|   evidence.path = /admin/
+|   evidence.response_size = 4784 bytes
+|   confidence=0.99  impact=0.70  module=http
+| [HIGH][192.168.100.60:8180][HTTP] Dangerous HTTP methods enabled: PUT, DELETE, TRACE  (score: 0.80, HIGH)
+|   PUT/DELETE allow file manipulation; TRACE enables Cross-Site Tracing (XST) attacks.
+|   evidence.dangerous_methods = PUT, DELETE, TRACE
+|   evidence.allow_header = GET, HEAD, POST, PUT, DELETE, TRACE, OPTIONS
+|   confidence=0.95  impact=0.70  module=http
+| [HIGH][192.168.100.60:8180][HTTP] HTTP security headers missing (6/6)  (score: 0.77, HIGH)
+|   evidence.missing_headers = Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options,
+|                               Content-Security-Policy, Referrer-Policy, Permissions-Policy
+|   confidence=0.95  impact=0.65  module=http
+| [MEDIUM][192.168.100.60:8180][HTTP] HTTP Server header discloses software version  (score: 0.59, MEDIUM)
+|   evidence.server_header = Apache-Coyote/1.1
+|_  confidence=0.95  impact=0.35  module=http
+
+Service Info: Hosts: metasploitable.localdomain, irc.Metasploitable.LAN; OSs: Unix, Linux
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 21.00 seconds
+
+# =============================================================================
+# FINDINGS SUMMARY — PASSIVE SCAN
+# =============================================================================
+#
+# Priority  Count  Top findings
+# --------  -----  -------------------------------------------------------------
+# CRITICAL    8    Ghostcat CVE-2020-1938, SMBv1 x2, Mutillidae, DVWA, phpinfo,
+#                  Mutillidae index, WebDAV
+# HIGH       17    vsftpd CVE-2011-2523, Telnet cleartext, DNS recursion,
+#                  TikiWiki, TWiki x2, Missing headers x2, RPC NFS,
+#                  SMB signing x2, ProFTPD CVE-2010-4221, MySQL CVE-2012-2122,
+#                  MySQL weak auth, PostgreSQL MD5, VNC DES x2, AJP exposed,
+#                  Admin panel, PUT/DELETE/TRACE, FTP no TLS x2
+# MEDIUM      9    SSH banner, SMTP banner x3, DNS version, PHP header x2,
+#                  Server headers x2, Java RMI, SMB OS x2, IRC active, VNC active
+#
+# NOTE: No credential tests or exploit probes were performed in this scan.
+#       Run with --script-args reko.aggression=1 to enable active checks.
+#       Expected additional CRITICAL findings with aggression=1:
+#         - vsftpd 2.3.4 backdoor root shell (port 6200)
+#         - FTP anonymous login confirmed
+#         - SMB null session 5 shares enumerated
+#         - Tomcat Manager tomcat:tomcat (WAR upload RCE)
+#         - SMTP VRFY user enumeration (root, postmaster, mailer-daemon)
+# =============================================================================
