@@ -1,0 +1,53 @@
+# Nmap generated files
+script.db
+nmap-services
+*.nse.cache
+
+# Test output directories
+reko_test_results/
+test_results/
+scan_output/
+
+# Common editor and OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# Editor swap and backup files
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+
+# IDE project files
+.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+logs/
+
+# Archives (don't commit scan output archives)
+*.zip
+*.tar.gz
+*.tar.bz2
+*.7z
