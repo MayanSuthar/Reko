@@ -1,4 +1,28 @@
 -- =============================================================================
+-- reko.nse  PART 1 of 4
+-- Day 1 core + CVE table + attack path engine + shared helpers + FTP + SSH modules
+-- Lines 1-2068 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS (combine all 4 parts in order):
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 <target>
+-- =============================================================================
+
+-- =============================================================================
+-- reko.nse  PART 1 of 4
+-- Day 1: Core skeleton + constants + CVE table + attack path engine + shared helpers + FTP module + SSH module
+-- Lines 1-2057 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS:
+--   Combine all 4 parts in order to form reko.nse:
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+-- =============================================================================
+
+-- =============================================================================
 -- reko.nse  --  Automated Active and Passive Network Enumeration Framework
 -- Assembled from Day 1-8 build files.
 -- Fixed for Lua 5.1 (NSE): each module block wrapped in do...end to stay
@@ -23,7 +47,7 @@
 -- ---------------------------------------------------------------------------
 description = [[
 Reko is a prioritized, modular network enumeration framework built as a single
-Nmap NSE script. It covers 25+ services, performs risk-based prioritization of
+Nmap NSE script. It covers 29 services, performs risk-based prioritization of
 findings, and outputs structured JSON / human-readable reports suitable for
 penetration testing triage and post-engagement reporting.
 
@@ -32,7 +56,7 @@ default. Active checks (anonymous login attempts, share listing, directory
 probing) require explicit opt-in via script arguments.
 
 Script arguments:
-  reko.aggression  : 0=passive only (default), 1=safe-active, 2=full-active
+  reko.aggression  : 0=passive only (default), 1=safe-active (credential checks + exploit probes), 2=full-active (extended wordlists + deeper brute-force)
   reko.timeout     : per-module socket timeout in ms (default 5000)
   reko.output      : "text" (default) | "json" | "both"
   reko.modules     : comma-separated list of modules to run (default: all)
@@ -65,7 +89,12 @@ local REKO_VERSION = "0.1.0-dev"
 -- Aggression levels
 local AGG_PASSIVE      = 0   -- banner grabbing, TLS, OS fingerprint only
 local AGG_SAFE_ACTIVE  = 1   -- anonymous logins, read-only share listing
-local AGG_FULL_ACTIVE  = 2   -- credential checks (requires explicit opt-in)
+local AGG_FULL_ACTIVE  = 2   -- extended checks: deeper wordlists, more credential pairs
+-- Level 2 differences vs level 1:
+--   HTTP: scans additional 50 low-probability paths
+--   FTP/SSH/DB: tests extended credential list (20 pairs vs 4)
+--   SMTP: also attempts EXPN enumeration
+--   DNS: also attempts AXFR zone transfer
 
 -- Default per-module socket timeout (milliseconds)
 local DEFAULT_TIMEOUT  = 5000
@@ -163,7 +192,6 @@ local PORT_SERVICE_MAP = {
   [6697] = { key = "irc",           proto = "tcp" },
   [2121] = { key = "ftp",          proto = "tcp" },
   [990]  = { key = "ftp",          proto = "tcp" },
-  [3389] = { key = "rdp",          proto = "tcp" },
   [5900] = { key = "vnc",          proto = "tcp" },
   [8009] = { key = "ajp",          proto = "tcp" },
   [8080] = { key = "http",         proto = "tcp" },
@@ -265,21 +293,27 @@ end
 -- We store a per-host findings registry in nmap's registry for cross-port access.
 
 local REKO_REGISTRY_KEY = "reko_findings_registry"
+local reko_mutex       = nmap.mutex("reko_registry")  -- prevents race on parallel coroutines
 
 --- Record a finding into the global per-host registry so the synthesiser
 --- can see findings from ALL ports when building the attack path summary.
 local function registry_record(host_ip, finding)
+  reko_mutex("lock")
   local reg = nmap.registry[REKO_REGISTRY_KEY] or {}
   local host_findings = reg[host_ip] or {}
   table.insert(host_findings, finding)
   reg[host_ip] = host_findings
   nmap.registry[REKO_REGISTRY_KEY] = reg
+  reko_mutex("done")
 end
 
 --- Retrieve all findings for a host from the global registry.
 local function registry_get(host_ip)
+  reko_mutex("lock")
   local reg = nmap.registry[REKO_REGISTRY_KEY] or {}
-  return reg[host_ip] or {}
+  local result = reg[host_ip] or {}
+  reko_mutex("done")
+  return result
 end
 
 --- Build an attack path summary from all findings collected for a host.
@@ -929,6 +963,31 @@ register_module("unknown", function(ctx)
   )
 end)
 
+-- ===========================================================================
+-- ACTION FUNCTION  (NSE entry point)
+-- ===========================================================================
+
+-- ── DAY 2: Shared socket helpers (top-level, used by all modules) ──────────
+-- =============================================================================
+-- reko_day2_ftp_ssh.lua
+-- Day 2 Addition: FTP module (port 21) + SSH module (port 22)
+--
+-- HOW TO INTEGRATE:
+--   Paste the two register_module() blocks below into reko.nse, directly
+--   above the final action() function. The Day 1 skeleton already provides
+--   every helper these modules call (register_module, log_*, ctx:add_finding).
+--
+-- NEW LIBRARY IMPORTS NEEDED (add to the imports block in reko.nse):
+--   local comm    = require "comm"
+--   local socket  = require "socket"    -- nmap's own socket wrapper
+-- The NSE-native socket used here is nmap.new_socket(), available always.
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- SHARED INTERNAL HELPERS  (local to Day 2 modules)
+-- These utilities are used by both FTP and SSH; keeping them local avoids
+-- polluting the global scope of reko.nse.
+-- ---------------------------------------------------------------------------
 
 --- Open a TCP socket to host:port with a millisecond timeout.
 -- Returns (socket, nil) on success, (nil, err_string) on failure.
@@ -1245,24 +1304,27 @@ local function ftp_list_directory(sd, host_ip, timeout_ms)
 end
 
 --- Probe for writable anonymous FTP: send MKD with a canary name.
--- We send QUIT immediately after MKD so even if 257 is returned the
--- connection drops before the server can finalise the operation.
+-- FIX 5: Read the MKD response FIRST, then send QUIT.
+-- Previous order (QUIT before readline) caused many FTP servers to flush
+-- the "221 Goodbye" reply before the "257" MKD reply in pipeline order,
+-- making this always return "readonly" — a false negative for writable dirs.
 -- Returns "writable" | "readonly" | "error"
 local function ftp_probe_write(sd)
   local canary = string.format("reko_probe_%d", os.time())
   local ok, err = sock_send(sd, "MKD " .. canary .. "\r\n")
   if not ok then return "error", "MKD send failed: " .. err end
 
-  -- Immediately send QUIT to prevent any side-effect
-  sock_send(sd, "QUIT\r\n")
-
+  -- Read MKD response BEFORE sending QUIT to avoid pipeline ordering issues
   local resp, rerr = sock_readline(sd)
   if not resp then return "error", "MKD read failed: " .. (rerr or "?") end
   resp = trim(resp)
 
+  -- Now send QUIT to cleanly close the session
+  sock_send(sd, "QUIT\r\n")
+
   local code = resp:match("^(%d%d%d)")
   if code == "257" then
-    return "writable", resp   -- server would have created it
+    return "writable", resp   -- server accepted MKD — directory is writable
   else
     return "readonly", resp
   end
@@ -1360,7 +1422,7 @@ register_module("ftp", function(ctx)
 
   -- ---- Active checks (aggression >= 1 required) -------------------------
   if agg < 1 then
-    log_info(ctx, "ftp", "Aggression level %d: skipping active checks", agg)
+    log_info(ctx, "ftp", string.format("Aggression level %d: skipping active checks", agg))
     return
   end
 
@@ -1465,7 +1527,9 @@ register_module("ftp", function(ctx)
   end
 
   -- ---- [A_BACKDOOR] vsftpd 2.3.4 backdoor probe (CVE-2011-2523) ----------
-  if banner and banner.software and banner.software:lower():find("vsftpd", 1, true)
+  -- SECURITY: gated behind agg >= 1 — actively triggers an exploit, never passive
+  if agg >= 1 and banner and banner.software
+     and banner.software:lower():find("vsftpd", 1, true)
      and banner.version == "2.3.4" then
     log_info(ctx, "ftp", "vsftpd 2.3.4 detected — probing CVE-2011-2523 backdoor")
     local trigger_sd, _ = tcp_connect(host_ip, port_num, timeout)
@@ -1635,10 +1699,10 @@ local function ssh_read_kexinit(sd)
   if pkt_len < 20 or pkt_len > 65536 then return nil end
 
   -- Read the rest of the packet
-  status, pkt_data = sd:receive_bytes(pkt_len)
+  local status, pkt_data = sd:receive_bytes(pkt_len)
   if not status or #pkt_data < pkt_len then return nil end
 
-  -- byte 0: padding_length
+  -- byte 0: padding_length (SSH spec: 4-255 bytes of padding at END of payload)
   local padding_len = pkt_data:byte(1)
   -- byte 1: message type
   local msg_type    = pkt_data:byte(2)
@@ -1649,17 +1713,22 @@ local function ssh_read_kexinit(sd)
 
   -- Skip: padding_length(1) + msg_type(1) + cookie(16) = offset 18
   local pos = 19   -- 1-indexed: byte 19 is start of first name-list
+  -- FIX 8: Bound the readable payload to exclude trailing padding bytes.
+  -- Without this, read_namelist could walk into padding and return garbage.
+  local payload_end = #pkt_data - (padding_len or 0)
 
   -- Helper: read a 4-byte length-prefixed UTF-8 name-list at pos.
   -- Returns (list_string, next_pos) or (nil, pos) on error.
   local function read_namelist(data, p)
-    if p + 3 > #data then return nil, p end
+    -- FIX 8: use payload_end instead of #data to avoid reading into padding
+    local safe_end = payload_end or #data
+    if p + 3 > safe_end then return nil, p end
     local nl = (data:byte(p)   * 16777216)
              + (data:byte(p+1) * 65536)
              + (data:byte(p+2) * 256)
              +  data:byte(p+3)
     p = p + 4
-    if p + nl - 1 > #data then return nil, p end
+    if nl < 0 or p + nl - 1 > safe_end then return nil, p end
     local s = data:sub(p, p + nl - 1)
     return s, p + nl
   end
@@ -1998,15 +2067,107 @@ register_module("ssh", function(ctx)
 
 end)
 
+-- =============================================================================
+-- END OF DAY 2:  FTP module + SSH module
+--
+-- What is complete:
+--   ✓ FTP banner parser  (220 greeting, software+version extraction)
+--   ✓ FTP AUTH TLS / FTPS probe  (passive, single command)
+--   ✓ FTP anonymous login attempt  (aggression >= 1)
+--   ✓ FTP home directory listing via PASV + LIST
+--   ✓ FTP write permission probe via MKD + immediate QUIT
+--   ✓ SSH banner parser  (protocol version, software, comments)
+--   ✓ SSHv1 detection with CRITICAL scoring
+--   ✓ SSH KEX_INIT binary packet reader  (RFC 4253 §7.1 compliant)
+--   ✓ Weak KEX algorithm detection  (SHA-1, DH-group1, etc.)
+--   ✓ Weak host-key algorithm detection  (ssh-dss / DSA)
+--   ✓ Weak cipher detection  (RC4, 3DES-CBC, AES-CBC, DES, none)
+--   ✓ Weak MAC detection  (HMAC-MD5, HMAC-SHA1 without ETM)
+--   ✓ zlib pre-auth compression detection  (CRIME oracle risk)
+--   ✓ All findings use canonical new_finding() schema from Day 1
+--   ✓ All socket operations wrapped in error-safe helpers
+--
+-- Integration: paste both register_module() blocks above into reko.nse
+-- above the final action() function, and add to imports:
+--   (no new imports required – nmap.new_socket() is always available)
+--
+-- Day 3 plan:
+--   → SMTP module (port 25/tcp) – banner, STARTTLS, open-relay, VRFY/EXPN
+--   → DNS  module (port 53)     – zone transfer (AXFR), recursion check,
+--                                  common record enumeration
+-- =============================================================================
 
-end  
+end  -- scope block-- =============================================================================
+-- reko.nse  PART 2 of 4
+-- SMTP + DNS + HTTP/HTTPS modules
+-- Lines 2069-4214 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS (combine all 4 parts in order):
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 <target>
+-- =============================================================================
+
+-- =============================================================================
+-- reko.nse  PART 2 of 4
+-- Day 2 cont: SMTP + DNS + HTTP/HTTPS modules
+-- Lines 2058-5358 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS:
+--   Combine all 4 parts in order to form reko.nse:
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+-- =============================================================================
 
 
 
-
+-- ── Day 3 modules: SMTP + DNS ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
 
+-- =============================================================================
+-- reko_day3_smtp_dns.lua
+-- Day 3 Addition: SMTP module (port 25/tcp) + DNS module (port 53/tcp+udp)
+--
+-- HOW TO INTEGRATE:
+--   Paste both register_module() blocks into reko.nse directly above the
+--   final action() function, after the Day 2 blocks.
+--   All helper functions (tcp_connect, sock_readline, sock_send, sock_close,
+--   trim, icontains) are already defined in reko_day2_ftp_ssh.lua — do NOT
+--   redefine them; just place this file's content after Day 2 in reko.nse.
+--
+-- NEW LIBRARY IMPORTS needed in reko.nse imports block:
+--   local dns    = require "dns"       -- NSE built-in DNS library
+--   local base64 = require "base64"    -- NSE built-in (used for UDP raw packets)
+-- =============================================================================
 
+-- ===========================================================================
+-- SMTP MODULE  (port 25/tcp  — also covers 465/587 via service_key "smtp")
+-- ===========================================================================
+-- Checks performed (by aggression level):
+--
+--  AGG 0 – passive:
+--    [P1] Banner grab: 220 greeting → software + version
+--    [P2] EHLO capability enumeration: list all extensions server supports
+--    [P3] STARTTLS support: check if STARTTLS is advertised in EHLO response
+--
+--  AGG 1 – safe-active:
+--    [A1] Open-relay test: attempt to relay a probe message from an external
+--         sender to an external recipient — only checks the RCPT TO response
+--         code (451/550 = reject, 250 = relay accepted). No email is sent;
+--         DATA is never issued.
+--    [A2] VRFY probe: attempt VRFY on a small list of common usernames
+--         to check whether user enumeration is possible.
+--    [A3] EXPN probe: attempt EXPN on common mailing list names.
+--
+--  Scoring rationale:
+--    base_weight for smtp = 0.50
+--    Open relay confirmed          → confidence 0.99, impact 0.85  → CRITICAL
+--    VRFY/EXPN user enum enabled   → confidence 0.95, impact 0.65  → HIGH
+--    No STARTTLS                   → confidence 0.95, impact 0.55  → HIGH
+--    Version disclosure            → confidence 0.95, impact 0.30  → LOW
+-- ===========================================================================
 
 --- Parse SMTP 220 banner: extract software + version.
 -- Common patterns:
@@ -2820,11 +2981,66 @@ register_module("dns", function(ctx)
 
 end)
 
+-- =============================================================================
+-- END OF DAY 3:  SMTP module + DNS module
+--
+-- What is complete:
+--   ✓ SMTP banner parser  (220 greeting, MTA software/version/hostname)
+--   ✓ Multi-line SMTP response reader  (RFC 5321 §4.2 continuation)
+--   ✓ EHLO capability enumeration + parsing
+--   ✓ STARTTLS presence check
+--   ✓ Open-relay test  (MAIL FROM + RCPT TO, no DATA issued, auto-RSET)
+--   ✓ VRFY user enumeration probe  (10 common usernames)
+--   ✓ EXPN mailing-list probe  (9 common list names)
+--   ✓ DNS binary query builder  (RFC 1035 wire format)
+--   ✓ DNS UDP + TCP transport layers
+--   ✓ DNS response header parser
+--   ✓ DNS name decoder  (with pointer compression)
+--   ✓ DNS TXT RDATA decoder
+--   ✓ version.bind CHAOS TXT probe
+--   ✓ Open recursion check  (external A query)
+--   ✓ Common record enumeration  (SOA, NS, MX, TXT)
+--   ✓ AXFR zone transfer attempt over TCP  (aggression >= 1)
+--   ✓ All findings follow Day 1 canonical schema
+--
+-- Day 4 plan:
+--   → HTTP module  (port 80)   – headers, redirect chain, common paths,
+--                                robots.txt, .git probe, server fingerprint
+--   → HTTPS module (port 443)  – TLS cert analysis, cipher suite enumeration,
+--                                certificate expiry, SANs, weak protocol check
+-- =============================================================================
+
 end  -- scope block
 
 
-
+-- ── Day 4 modules: HTTP + HTTPS ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
+
+-- =============================================================================
+-- reko_day4_http_https.lua
+-- Day 4 Addition: HTTP module (port 80/tcp) + HTTPS/TLS module (port 443/tcp)
+--
+-- HOW TO INTEGRATE INTO reko.nse:
+--   Paste this entire file's content into reko.nse ABOVE the action() function,
+--   after the Day 3 blocks. Do NOT redefine helpers already in Day 2
+--   (tcp_connect, sock_readline, sock_send, sock_close, trim, icontains).
+--
+-- NEW LIBRARY IMPORTS needed in reko.nse imports block:
+--   local http   = require "http"      -- NSE built-in HTTP library
+--   local tls    = require "tls"       -- NSE built-in TLS library
+--   local sslcert= require "sslcert"   -- NSE built-in SSL cert helper
+--   local url    = require "url"       -- NSE built-in URL parser
+--
+-- CORRECT FILE STRUCTURE REMINDER:
+-- ┌─────────────────────────────────────────────────────┐
+-- │  [Day 1]  metadata + constants + helpers + registry │
+-- │  [Day 2]  shared socket helpers + FTP + SSH         │
+-- │  [Day 3]  SMTP + DNS                                │
+-- │  [Day 4]  HTTP + HTTPS   ← you are here             │
+-- │  [Day 5+] future modules                            │
+-- │  action() function       ← ALWAYS LAST              │
+-- └─────────────────────────────────────────────────────┘
+-- =============================================================================
 
 -- ===========================================================================
 -- HTTP MODULE  (port 80/tcp — also fires on any http service_key port)
@@ -4008,13 +4224,79 @@ register_module("https", function(ctx)
 
 end)
 
+-- =============================================================================
+-- END OF DAY 4: HTTP module + HTTPS/TLS module
+--
+-- What is complete:
+--   ✓ Raw HTTP GET / OPTIONS / TRACE request builders (no external deps)
+--   ✓ HTTP response parser (status line + headers + body split)
+--   ✓ Server + technology stack header fingerprinting
+--   ✓ Full 6-header security header audit (HSTS, CSP, X-Frame-Options, etc.)
+--   ✓ Dangerous HTTP method detection via OPTIONS (PUT/DELETE/TRACE/CONNECT)
+--   ✓ Redirect chain follower with open-redirect detection (5-hop limit)
+--   ✓ robots.txt Disallow path extraction
+--   ✓ 32-path sensitive file/directory probe with false-positive filter
+--   ✓ Directory listing detection (aggression >= 1)
+--   ✓ XST TRACE active test with canary header (aggression >= 1)
+--   ✓ TLS protocol version check (SSLv2 → TLSv1.3 via NSE tls library)
+--   ✓ TLS 1.2 cipher suite audit (NULL/EXPORT/RC4/3DES/anon patterns)
+--   ✓ TLS certificate fetch via NSE sslcert library
+--   ✓ Self-signed certificate detection
+--   ✓ Certificate expiry check (expired + <30 days warning)
+--   ✓ Weak signature algorithm detection (MD5/SHA1)
+--   ✓ Wildcard certificate detection
+--   ✓ SAN extraction for scoping
+--   ✓ HSTS presence check on HTTPS endpoint
+--
+-- Day 5 plan:
+--   → SMB     (139/445)  – share enum, anon access, signing check, OS/domain info
+--   → Kerberos (88/464)  – realm discovery, AS-REP roasting exposure check
+--   → NetBIOS-NS (137)   – name table query, workgroup/domain identification
+-- =============================================================================
 
-end  
+end  -- scope block-- =============================================================================
+-- reko.nse  PART 3 of 4
+-- SMB + Kerberos + NetBIOS + LDAP + SNMP + NTP + RPC modules
+-- Lines 4215-6636 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS (combine all 4 parts in order):
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 <target>
+-- =============================================================================
 
 
 
-
+-- ── Day 5 modules: SMB + Kerberos + NetBIOS ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
+
+-- =============================================================================
+-- reko_day5_smb_kerberos_netbios.lua
+-- Day 5 Addition: SMB (139/445) + Kerberos (88/464) + NetBIOS-NS (137/udp)
+--
+-- HOW TO INTEGRATE INTO reko.nse:
+--   Paste this entire file ABOVE the action() function, after the Day 4 block.
+--   Helpers already defined in Day 2 are reused directly — do NOT redefine:
+--   tcp_connect, sock_readline, sock_send, sock_close, trim, icontains
+--
+-- NEW LIBRARY IMPORTS needed in reko.nse imports block:
+--   local smb    = require "smb"       -- NSE built-in SMB library
+--   local msrpc  = require "msrpc"     -- NSE built-in MS-RPC library
+--   local nbtstat= require "netbios"   -- NSE built-in NetBIOS library
+--   local asn1   = require "asn1"      -- NSE built-in ASN.1 (for Kerberos)
+--
+-- UPDATED FILE STRUCTURE:
+-- ┌──────────────────────────────────────────────┐
+-- │ Day 1  metadata · constants · registry       │
+-- │ Day 2  socket helpers · FTP · SSH            │
+-- │ Day 3  SMTP · DNS                            │
+-- │ Day 4  HTTP · HTTPS                          │
+-- │ Day 5  SMB · Kerberos · NetBIOS  ← here      │
+-- │ Days 6-8  (future)                           │
+-- │ action()                  ← ALWAYS LAST      │
+-- └──────────────────────────────────────────────┘
+-- =============================================================================
 
 -- ===========================================================================
 -- SMB MODULE  (ports 139/tcp and 445/tcp)
@@ -5121,12 +5403,74 @@ register_module("netbios_ns", function(ctx)
   end
 end)
 
+-- =============================================================================
+-- END OF DAY 5: SMB + Kerberos + NetBIOS-NS
+--
+-- What is complete:
+--   ✓ SMB raw Negotiate packet builder (SMBv1 + SMBv2 dialect list)
+--   ✓ SMBv1 Negotiate response parser (dialect index, OS, domain, LAN Mgr)
+--   ✓ SMBv1 active detection + CRITICAL finding (EternalBlue/WannaCry risk)
+--   ✓ SMB signing status check (required / enabled-not-required / disabled)
+--   ✓ NTLM relay risk finding for disabled/optional signing
+--   ✓ OS + domain information disclosure finding
+--   ✓ Null session share enumeration via NSE smb library (agg >= 1)
+--   ✓ IPC$/ADMIN$/C$ administrative share accessibility check
+--   ✓ Kerberos AS-REQ builder (raw DER/ASN.1, RFC 4120 compliant)
+--   ✓ KDC reachability + realm name discovery from KRB-ERROR response
+--   ✓ Pre-authentication bypass detection (AS-REP without credentials)
+--   ✓ AS-REP Roasting probe for 12 common service account names (agg >= 1)
+--   ✓ NetBIOS NBSTAT query (UDP 137) with name table parser
+--   ✓ Computer name + domain name extraction from name table
+--   ✓ Domain Controller identification via <1C> name suffix
+--   ✓ Master Browser identification via <1B> name suffix
+--   ✓ All findings follow Day 1 canonical schema
+--
+-- Day 6 plan:
+--   → LDAP  (389/3268) – anonymous bind, base DN, schema, user attribute enum
+--   → SNMP  (161/udp)  – community string probes, OID walk, system info
+--   → NTP   (123/udp)  – monlist check, version, stratum, amplification risk
+--   → RPC   (111/135)  – endpoint mapper, service listing
+-- =============================================================================
 
-end  
+end  -- scope block
+-- =============================================================================
+-- reko.nse  PART 3 of 4
+-- Day 3: SMB + Kerberos + NetBIOS + LDAP + SNMP + NTP + RPC + all DB modules + NFS
+-- Lines 5359-8190 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS:
+--   Combine all 4 parts in order to form reko.nse:
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+-- =============================================================================
 
 
 
+-- ── Day 6 modules: LDAP + SNMP + NTP + RPC ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
+
+-- =============================================================================
+-- reko_day6_ldap_snmp_ntp_rpc.lua
+-- Day 6 Addition: LDAP (389/3268) + SNMP (161/udp) + NTP (123/udp) + RPC (111/135)
+--
+-- HOW TO INTEGRATE INTO reko.nse:
+--   Paste this entire file ABOVE the action() function, after the Day 5 block.
+--   Helpers already defined in Day 2 (tcp_connect, sock_send, sock_close,
+--   sock_readline, trim, icontains) are reused directly.
+--
+-- UPDATED FILE STRUCTURE:
+-- ┌──────────────────────────────────────────────┐
+-- │ Day 1  metadata · constants · registry       │
+-- │ Day 2  socket helpers · FTP · SSH            │
+-- │ Day 3  SMTP · DNS                            │
+-- │ Day 4  HTTP · HTTPS                          │
+-- │ Day 5  SMB · Kerberos · NetBIOS              │
+-- │ Day 6  LDAP · SNMP · NTP · RPC  ← here       │
+-- │ Days 7-8  (future)                           │
+-- │ action()                  ← ALWAYS LAST      │
+-- └──────────────────────────────────────────────┘
+-- =============================================================================
 
 -- ===========================================================================
 -- LDAP MODULE  (ports 389/tcp and 3268/tcp — Global Catalog)
@@ -6314,10 +6658,89 @@ register_module("rpc", function(ctx)
   end
 end)
 
-end  
+-- =============================================================================
+-- END OF DAY 6: LDAP + SNMP + NTP + RPC
+--
+-- What is complete:
+--   ✓ LDAP BER encoder (tag, length, integer, octet-string, sequence, enum)
+--   ✓ LDAP anonymous BindRequest (LDAPv3, RFC 4511)
+--   ✓ LDAP Root DSE search (namingContexts, SASL mechs, server info)
+--   ✓ LDAP response reader with variable-length BER message framing
+--   ✓ LDAP user enumeration via anonymous bind (agg >= 1)
+--   ✓ SNMP community string probe (15 common strings)
+--   ✓ SNMP GetRequest builder (BER-encoded, SNMPv2c)
+--   ✓ SNMP system MIB-II info gathering (sysDescr/Name/Location/Contact/Uptime)
+--   ✓ NTP client request + response parser (version, stratum, ref ID)
+--   ✓ NTP monlist amplification probe (CVE-2013-5211)
+--   ✓ NTP Mode 6 unauthenticated control query check
+--   ✓ Sun RPC portmapper DUMP request builder (RFC 1833)
+--   ✓ Portmapper response parser (program/version/protocol/port list)
+--   ✓ High-value RPC service identification (NFS, mountd)
+--   ✓ MS-RPC endpoint mapper DCE/RPC bind request (port 135)
+--   ✓ All findings follow Day 1 canonical schema
+--
+-- Day 7 plan:
+--   → MSSQL (1433)  – version, instance enum, SA login check
+--   → MySQL (3306)  – version, anonymous login, database listing
+--   → PostgreSQL (5432) – version, trust auth check
+--   → Oracle TNS (1521) – listener version, SID enumeration
+--   → NFS (2049)    – export listing, read/write permission check
+-- =============================================================================
 
+end  -- scope block-- =============================================================================
+-- reko.nse  PART 4 of 4
+-- All DB modules + NFS + RDP + VNC + SIP + AJP + POP3 + IMAP + Java RMI + ident + IRC + Telnet + action()
+-- Lines 6637-9775 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS (combine all 4 parts in order):
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 <target>
+-- =============================================================================
+
+
+
+-- ── Day 7 modules: MSSQL + MySQL + PostgreSQL + Oracle + NFS ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
 
+-- =============================================================================
+-- reko_day7_databases_nfs.lua
+-- Day 7 Addition:
+--   MSSQL      (port 1433/tcp)
+--   MySQL      (port 3306/tcp)
+--   PostgreSQL (port 5432/tcp)
+--   Oracle TNS (port 1521/tcp)
+--   NFS        (port 2049/tcp)
+--
+-- HOW TO INTEGRATE INTO reko.nse:
+--   Paste this entire file ABOVE the action() function, after the Day 6 block.
+--   Helpers already defined in Day 2 (tcp_connect, sock_send, sock_close,
+--   sock_readline, trim, icontains) are reused directly — do NOT redefine.
+--
+-- UPDATED FILE STRUCTURE:
+-- ┌──────────────────────────────────────────────┐
+-- │ Day 1  metadata · constants · registry       │
+-- │ Day 2  socket helpers · FTP · SSH            │
+-- │ Day 3  SMTP · DNS                            │
+-- │ Day 4  HTTP · HTTPS                          │
+-- │ Day 5  SMB · Kerberos · NetBIOS              │
+-- │ Day 6  LDAP · SNMP · NTP · RPC               │
+-- │ Day 7  MSSQL·MySQL·PgSQL·Oracle·NFS ← here   │
+-- │ Day 8  (tomorrow)                            │
+-- │ action()                  ← ALWAYS LAST      │
+-- └──────────────────────────────────────────────┘
+--
+-- SECURITY NOTE:
+--   All database modules are non-destructive by design:
+--   - We read handshake/banner data only
+--   - Credential checks (agg >= 1) use known-default pairs with
+--     immediate disconnect — no queries are ever executed
+--   - No INSERT / UPDATE / DROP / EXEC is ever sent
+-- =============================================================================
+
+
+-- (shared helpers moved to top level)
 
 -- ===========================================================================
 -- MSSQL MODULE  (port 1433/tcp)
@@ -7816,10 +8239,105 @@ register_module("nfs", function(ctx)
   end
 end)
 
+-- =============================================================================
+-- END OF DAY 7: MSSQL + MySQL + PostgreSQL + Oracle TNS + NFS
+--
+-- What is complete:
+--   ✓ Shared DB helpers: read_bytes, read_u32/u16 BE/LE, u32/u16 BE/LE builders
+--   ✓ Default credential table for all 4 databases (mssql/mysql/postgresql/oracle)
+--
+--   ✓ MSSQL TDS PreLogin packet builder (correct option header + data layout)
+--   ✓ MSSQL TDS PreLogin response parser (version, encryption, instance name)
+--   ✓ MSSQL TDS Login7 packet builder with XOR password obfuscation
+--   ✓ MSSQL version-to-product name mapping (7.0 through 2022)
+--   ✓ MSSQL encryption mode audit (ENCRYPT_OFF/NOT_SUP → HIGH finding)
+--   ✓ MSSQL SA default credential check via LOGINACK token detection
+--
+--   ✓ MySQL HandshakeV10 parser (version, capabilities, auth plugin, SSL flag)
+--   ✓ MySQL HandshakeResponse41 builder with empty auth (no-password test)
+--   ✓ MySQL SSL capability audit
+--   ✓ MySQL weak auth plugin detection (mysql_old_password)
+--   ✓ MySQL root/empty password check via OK packet detection
+--
+--   ✓ PostgreSQL StartupMessage builder (protocol 3.0, user/database params)
+--   ✓ PostgreSQL multi-message response parser (R/S/E message types)
+--   ✓ PostgreSQL trust auth detection (AuthenticationOk = no password → CRITICAL)
+--   ✓ PostgreSQL auth type audit: trust/MD5/plaintext/SCRAM scoring
+--   ✓ PostgreSQL version extraction from ParameterStatus messages
+--
+--   ✓ Oracle TNS CONNECT packet builder (version + status request variants)
+--   ✓ Oracle TNS response text extractor (parenthesized content)
+--   ✓ Oracle TNS service/SID name extraction from STATUS response
+--   ✓ Oracle default SID probe (ORCL, XE, PROD, TEST, etc.) via response type check
+--
+--   ✓ NFS EXPORT RPC builder (Sun RPC with TCP record marking)
+--   ✓ NFS XDR export list parser (linked list of path + client group entries)
+--   ✓ World-accessible export detection (* / everyone / no clients)
+--   ✓ NFS MNT RPC attempt to confirm mount access (agg >= 1)
+--   ✓ All findings follow Day 1 canonical schema
+--
+-- Day 8 plan (FINAL BUILD DAY):
+--   → RDP      (3389)  – encryption level, NLA check, CredSSP fingerprint
+--   → VNC      (5900)  – version, auth type (no-auth = CRITICAL)
+--   → SIP      (5060)  – OPTIONS probe, user enumeration
+--   → AJP      (8009)  – Ghostcat detection (CVE-2020-1938)
+--   → POP3     (110)   – banner, STARTTLS, TOP command check
+--   → IMAP     (143)   – banner, STARTTLS, capability enum
+--   → Java RMI (1100)  – registry list, remote object exposure
+--   → ident    (113)   – username disclosure check
+-- =============================================================================
 
-end  
+end  -- scope block
+-- =============================================================================
+-- reko.nse  PART 4 of 4
+-- Day 4: RDP + VNC + SIP + AJP + POP3 + IMAP + Java RMI + ident + IRC + Telnet + action()
+-- Lines 8191-9730 of the complete reko.nse file
+--
+-- ASSEMBLY INSTRUCTIONS:
+--   Combine all 4 parts in order to form reko.nse:
+--   cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+-- =============================================================================
 
+
+
+-- ── Day 8 modules: RDP + VNC + SIP + AJP + POP3 + IMAP + Java RMI + ident ────────────────
 do  -- scope block: keeps locals under Lua 5.1's 200-variable limit
+
+-- =============================================================================
+-- reko_day8_final_modules.lua
+-- Day 8 — FINAL BUILD DAY
+--
+-- Modules:
+--   RDP      (port 3389/tcp)
+--   VNC      (port 5900/tcp)
+--   SIP      (port 5060/udp)
+--   AJP      (port 8009/tcp)
+--   POP3     (port 110/tcp)
+--   IMAP     (port 143/tcp)
+--   Java RMI (port 1100/tcp)
+--   ident    (port 113/tcp)
+--
+-- HOW TO INTEGRATE INTO reko.nse:
+--   Paste this file ABOVE the action() function, after the Day 7 block.
+--   This is the LAST block of modules. After this, action() closes the file.
+--
+-- FINAL FILE STRUCTURE (complete):
+-- ┌──────────────────────────────────────────────┐
+-- │ Day 1  metadata · constants · registry       │
+-- │ Day 2  socket helpers · FTP · SSH            │
+-- │ Day 3  SMTP · DNS                            │
+-- │ Day 4  HTTP · HTTPS                          │
+-- │ Day 5  SMB · Kerberos · NetBIOS              │
+-- │ Day 6  LDAP · SNMP · NTP · RPC               │
+-- │ Day 7  MSSQL · MySQL · PgSQL · Oracle · NFS  │
+-- │ Day 8  RDP · VNC · SIP · AJP · POP3 ·        │
+-- │        IMAP · Java RMI · ident  ← THIS FILE  │
+-- │ action()                  ← ALWAYS LAST      │
+-- └──────────────────────────────────────────────┘
+-- =============================================================================
+
 
 -- ===========================================================================
 -- RDP MODULE  (port 3389/tcp)
@@ -8879,6 +9397,83 @@ register_module("ident", function(ctx)
 end)
 
 
+-- =============================================================================
+-- END OF DAY 8 — ALL MODULES COMPLETE
+-- =============================================================================
+-- Total modules registered: 25 services across 8 build days
+--
+-- Complete module list:
+--   Day 2: ftp, ssh
+--   Day 3: smtp, dns
+--   Day 4: http, https
+--   Day 5: smb, kerberos, netbios_ns
+--   Day 6: ldap, snmp, ntp, rpc
+--   Day 7: mssql, mysql, postgresql, oracle_tns, nfs
+--   Day 8: rdp, vnc, sip, ajp, pop3, imap, java_rmi, ident
+--
+-- =============================================================================
+-- FINAL ASSEMBLY GUIDE — HOW TO BUILD reko.nse
+-- =============================================================================
+--
+-- STEP 1: Create reko.nse by combining all files IN ORDER:
+--
+--   On Linux/Mac:
+--   cat reko_day1_skeleton.lua \
+--       reko_day2_ftp_ssh.lua \
+--       reko_day3_smtp_dns.lua \
+--       reko_day4_http_https.lua \
+--       reko_day5_smb_kerberos_netbios.lua \
+--       reko_day6_ldap_snmp_ntp_rpc.lua \
+--       reko_day7_databases_nfs.lua \
+--       reko_day8_final_modules.lua \
+--       > reko_combined.lua
+--
+-- STEP 2: Move action() to the END of the file:
+--   - Open reko_combined.lua in any editor
+--   - Find the action() function (it is at the end of the Day 1 block)
+--   - CUT the entire action() block (from "action = function(host, port)"
+--     to the closing "end")
+--   - PASTE it at the very bottom of reko_combined.lua
+--   - Save as reko.nse
+--
+-- STEP 3: Copy to Nmap scripts directory:
+--   sudo cp reko.nse /usr/share/nmap/scripts/
+--   sudo nmap --script-updatedb
+--
+-- STEP 4: Verify syntax:
+--   nmap --script-linting reko.nse
+--
+-- STEP 5: Run your first scan:
+--   nmap -sV --script reko.nse <target>
+--
+-- =============================================================================
+-- USAGE REFERENCE
+-- =============================================================================
+--
+--   # Passive only (default — safe for all environments)
+--   nmap -sV --script reko.nse <target>
+--
+--   # Active checks enabled
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 <target>
+--
+--   # JSON output for integration with other tools
+--   nmap -sV --script reko.nse --script-args reko.output=json <target>
+--
+--   # Single module only
+--   nmap -p 445 -sV --script reko.nse --script-args reko.modules=smb <target>
+--
+--   # Multiple modules
+--   nmap -sV --script reko.nse --script-args reko.modules=smb,http,https <target>
+--
+--   # Full verbose active scan with JSON output
+--   nmap -sV --script reko.nse \
+--     --script-args reko.aggression=1,reko.output=both,reko.loglevel=2 \
+--     <target>
+--
+--   # Scan against Metasploitable 2 (Day 9 testing)
+--   nmap -sV --script reko.nse --script-args reko.aggression=1 192.168.56.101
+--
+-- =============================================================================
 
 end  -- scope block
 
@@ -9157,7 +9752,7 @@ register_module("telnet", function(ctx)
           "Telnet accepted login with '%s'/'%s' (%s). "
           .. "Full interactive shell access over plaintext Telnet. "
           .. "An attacker gains complete system access.",
-          cred[1], cred[2], cred[3]
+          cred[1], ctx.config.redact and "[REDACTED]" or cred[2], cred[3]
         ),
         {
           username    = cred[1],
@@ -9168,7 +9763,7 @@ register_module("telnet", function(ctx)
         },
         0.99, 0.92
       )
-      log_warn(ctx, "telnet", "Shell access via: " .. cred[1] .. "/" .. cred[2])
+      log_warn(ctx, "telnet", "Shell access via: " .. cred[1] .. "/" .. (ctx.config.redact and "[REDACTED]" or cred[2]))
       break
     end
   end
@@ -9220,3 +9815,25 @@ action = function(host, port)
 
   return output
 end
+
+-- ===========================================================================
+-- END OF DAY 1:  reko.nse  –  Skeleton + Initialization Layer
+--
+-- What is complete:
+--   ✓ NSE metadata (description, author, license, categories)
+--   ✓ Library imports
+--   ✓ All constants (aggression levels, priorities, weights, port map)
+--   ✓ portrule  – fires on all 25+ covered ports
+--   ✓ init_context()  – full argument parsing + context construction
+--   ✓ Logging helpers  (log_error / log_warn / log_info)
+--   ✓ new_finding()  – canonical schema + scoring + priority bucketing
+--   ✓ build_output()  – text / JSON / both
+--   ✓ Module registry  (register_module / MODULE_REGISTRY table)
+--   ✓ dispatch_to_modules()  – pcall-isolated dispatch
+--   ✓ Placeholder "unknown" module
+--   ✓ action()  – NSE entry point wiring everything together
+--
+-- What comes next (Day 2):
+--   → FTP module  (port 21)  + SSH module (port 22)
+-- ===========================================================================
+
