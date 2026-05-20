@@ -1,0 +1,118 @@
+name: Reko NSE Lint
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '**.nse'
+      - '**.lua'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - '**.nse'
+      - '**.lua'
+
+jobs:
+  lua-lint:
+    name: Lua Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Lua 5.1 and luacheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lua5.1 luarocks
+          sudo luarocks install luacheck
+
+      - name: Check Lua syntax — all .lua files
+        run: |
+          echo "Checking Lua syntax in part files..."
+          for f in reko_part*.lua; do
+            echo "  Checking $f ..."
+            luac5.1 -p "$f" && echo "  ✓ $f OK" || { echo "  ✗ $f FAILED"; exit 1; }
+          done
+
+      - name: Check Lua syntax — assembled reko.nse
+        run: |
+          if [ -f reko.nse ]; then
+            echo "Checking reko.nse ..."
+            luac5.1 -p reko.nse && echo "✓ reko.nse OK"
+          else
+            echo "Assembling reko.nse from parts..."
+            cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko_assembled.nse
+            luac5.1 -p reko_assembled.nse && echo "✓ Assembled script OK"
+          fi
+
+      - name: Check local variable count stays under Lua 5.1 limit (200)
+        run: |
+          python3 - << 'EOF'
+          import re, sys
+
+          with open('reko_part1.lua', 'r', errors='replace') as f:
+              content = f.read()
+
+          lines = content.splitlines()
+          in_scope = False
+          top_locals = 0
+          for line in lines:
+              if 'do  -- scope block' in line:
+                  in_scope = True
+              if line.strip() == 'end  -- scope block':
+                  in_scope = False
+              if not in_scope and line.startswith('local '):
+                  top_locals += 1
+
+          print(f"Top-level locals in part1: {top_locals} (Lua 5.1 limit: 200)")
+          if top_locals >= 200:
+              print("ERROR: Too many top-level locals — will fail in NSE!")
+              sys.exit(1)
+          else:
+              print("✓ Local variable count is safe")
+          EOF
+
+      - name: Verify all 29 modules are registered
+        run: |
+          python3 - << 'EOF'
+          import re, sys
+
+          parts = ['reko_part1.lua','reko_part2.lua','reko_part3.lua','reko_part4.lua']
+          content = ''
+          for p in parts:
+              try:
+                  with open(p, 'r', errors='replace') as f:
+                      content += f.read()
+              except FileNotFoundError:
+                  pass
+
+          modules = re.findall(r'register_module\("([^"]+)"', content)
+          expected = [
+              'ftp','ssh','telnet','smtp','dns','http','https','kerberos',
+              'pop3','ident','ntp','netbios_ns','smb','imap','snmp','ldap',
+              'java_rmi','mssql','oracle_tns','nfs','mysql','rdp','postgresql',
+              'vnc','sip','ajp','irc','rpc','unknown'
+          ]
+          missing = [m for m in expected if m not in modules]
+          extra   = [m for m in modules  if m not in expected]
+
+          print(f"Modules found: {len(modules)}")
+          if missing:
+              print(f"MISSING: {missing}")
+              sys.exit(1)
+          if extra:
+              print(f"Extra (not in expected list): {extra}")
+          print("✓ All expected modules registered")
+          EOF
+
+  markdown-lint:
+    name: Markdown Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check markdown files exist
+        run: |
+          for f in README.md docs/SCORING.md docs/MODULES.md docs/TESTING.md LICENSE; do
+            [ -f "$f" ] && echo "✓ $f" || echo "✗ MISSING: $f"
+          done
