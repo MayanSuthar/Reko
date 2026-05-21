@@ -208,14 +208,6 @@ sudo nmap --script-updatedb
 nmap --script-help reko.nse
 ```
 
-### Build from Parts
-The script is split into 4 parts for readability. Assemble with:
-
-```bash
-cat reko_part1.lua reko_part2.lua reko_part3.lua reko_part4.lua > reko.nse
-sudo cp reko.nse /usr/share/nmap/scripts/
-sudo nmap --script-updatedb
-```
 
 ---
 
@@ -304,10 +296,6 @@ Reko was developed as part of M.Tech research in Cyber Security at **Sardar Pate
 ```
 reko/
 ├── reko.nse              ← Complete assembled script (install this)
-├── reko_part1.lua        ← Core skeleton + CVE table + FTP + SSH modules
-├── reko_part2.lua        ← SMTP + DNS + HTTP/HTTPS modules
-├── reko_part3.lua        ← SMB + Kerberos + NetBIOS + LDAP + SNMP + NTP + RPC + DB + NFS
-├── reko_part4.lua        ← RDP + VNC + SIP + AJP + POP3 + IMAP + RMI + ident + IRC + Telnet
 ├── docs/
 │   ├── SCORING.md        ← How the scoring formula works
 │   ├── MODULES.md        ← Detailed module documentation
